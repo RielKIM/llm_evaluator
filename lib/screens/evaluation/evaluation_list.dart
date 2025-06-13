@@ -3,6 +3,8 @@ import 'package:intl/intl.dart';
 import '../../models/model.dart';
 import '../../models/dataset.dart';
 import '../../services/api_service.dart';
+import '../../services/model_service.dart';
+import '../../services/dataset_service.dart';
 
 const Color kPrimary = Color(0xFF6366F1);
 const Color kPrimaryDark = Color(0xFF8B5CF6);
@@ -53,7 +55,7 @@ class _EvaluationListScreenState extends State<EvaluationListScreen> {
 
   int? _selectedIndex;
 
-  void _startEvaluation() async {
+  void _startEvaluation(List<Model> models, List<Dataset> datasets) async {
     if (_selectedModelId == null || _selectedDatasetIds.isEmpty) return;
     setState(() {
       _isEvaluating = true;
@@ -67,7 +69,9 @@ class _EvaluationListScreenState extends State<EvaluationListScreen> {
       setState(() {
         count++;
         _progress = count / total;
-        _logs.add('[$count/$total] "${ApiService().getModels().firstWhere((m) => m.id == _selectedModelId!).name}" 모델로 "${ApiService().getDatasets().firstWhere((d) => d.id == dsId).name}" 평가셋 평가 완료');
+        final modelName = models.firstWhere((m) => m.id.toString() == _selectedModelId!, orElse: () => Model(id: 0, name: '-', desc: '', createdAt: '')).name;
+        final datasetName = datasets.firstWhere((d) => d.id.toString() == dsId, orElse: () => Dataset(id: 0, name: '-', desc: '', createdAt: '')).name;
+        _logs.add('[$count/$total] "${modelName}" 모델로 "${datasetName}" 평가셋 평가 완료');
       });
       // 자동 스크롤
       await Future.delayed(const Duration(milliseconds: 100));
@@ -162,107 +166,129 @@ class _EvaluationListScreenState extends State<EvaluationListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final models = ApiService().getModels();
-    final datasets = ApiService().getDatasets();
-    final selectedDatasets = datasets.where((ds) => _selectedDatasetIds.contains(ds.id)).toList();
-    final percent = (_isEvaluating && _selectedDatasetIds.isNotEmpty)
-        ? (_progress * 100).toStringAsFixed(0) + '%'
-        : '';
-    final datasetIcons = {
-      'KoNLP': '🔤',
-      'QA': '❓',
-      '감정': '😊',
-      '뉴스': '📰',
-      '챗봇': '💬',
-      '의료': '🩺',
-      '법률': '⚖️',
-      'IT': '💻',
-      'SNS': '💬',
-      '일상': '🏠',
-    };
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Row(
-        children: [
-          // 왼쪽: 리스트
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      '평가 목록',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
-                    const Spacer(),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('평가 실행'),
-                      onPressed: _showRunEvaluationDialog,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: _evaluations.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 16),
-                    itemBuilder: (context, idx) {
-                      final eval = _evaluations[idx];
-                      return Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          title: Text(eval['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                          subtitle: Text('모델: ${eval['model']}  |  데이터셋: ${eval['dataset']}'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(eval['date'], style: const TextStyle(color: Colors.grey)),
-                              const SizedBox(width: 16),
-                              IconButton(
-                                icon: const Icon(Icons.info_outline),
-                                tooltip: '상세',
-                                onPressed: () => _showDetailDialog(eval),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                tooltip: '삭제',
-                                onPressed: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('삭제 기능 준비중')),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                          onTap: () {
-                            setState(() {
-                              _selectedIndex = idx;
-                            });
-                          },
-                          selected: _selectedIndex == idx,
+    return FutureBuilder<List<Model>>(
+      future: ModelService().getList(),
+      builder: (context, modelSnapshot) {
+        if (modelSnapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (modelSnapshot.hasError) {
+          return Center(child: Text('모델 불러오기 실패: \\${modelSnapshot.error}'));
+        }
+        final models = modelSnapshot.data ?? [];
+        return FutureBuilder<List<Dataset>>(
+          future: DatasetService().getList(),
+          builder: (context, datasetSnapshot) {
+            if (datasetSnapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (datasetSnapshot.hasError) {
+              return Center(child: Text('데이터셋 불러오기 실패: \\${datasetSnapshot.error}'));
+            }
+            final datasets = datasetSnapshot.data ?? [];
+            final selectedDatasets = datasets.where((ds) => _selectedDatasetIds.contains(ds.id)).toList();
+            final percent = (_isEvaluating && _selectedDatasetIds.isNotEmpty)
+                ? (_progress * 100).toStringAsFixed(0) + '%'
+                : '';
+            final datasetIcons = {
+              'KoNLP': '🔤',
+              'QA': '❓',
+              '감정': '😊',
+              '뉴스': '📰',
+              '챗봇': '💬',
+              '의료': '🩺',
+              '법률': '⚖️',
+              'IT': '💻',
+              'SNS': '💬',
+              '일상': '🏠',
+            };
+            return Padding(
+              padding: const EdgeInsets.all(24),
+              child: Row(
+                children: [
+                  // 왼쪽: 리스트
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              '평가 목록',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                            ),
+                            const Spacer(),
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('평가 실행'),
+                              onPressed: () => _startEvaluation(models, datasets),
+                            ),
+                          ],
                         ),
-                      );
-                    },
+                        const SizedBox(height: 24),
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: _evaluations.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 16),
+                            itemBuilder: (context, idx) {
+                              final eval = _evaluations[idx];
+                              return Card(
+                                elevation: 2,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                                  title: Text(eval['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                  subtitle: Text('모델: ${eval['model']}  |  데이터셋: ${eval['dataset']}'),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(eval['date'], style: const TextStyle(color: Colors.grey)),
+                                      const SizedBox(width: 16),
+                                      IconButton(
+                                        icon: const Icon(Icons.info_outline),
+                                        tooltip: '상세',
+                                        onPressed: () => _showDetailDialog(eval),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline),
+                                        tooltip: '삭제',
+                                        onPressed: () {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('삭제 기능 준비중')),
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedIndex = idx;
+                                    });
+                                  },
+                                  selected: _selectedIndex == idx,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 32),
-          // 오른쪽: 상세 정보
-          Expanded(
-            flex: 3,
-            child: _selectedIndex == null
-                ? const Center(child: Text('평가를 선택하세요', style: TextStyle(fontSize: 20, color: Colors.grey)))
-                : _buildDetailPanel(_evaluations[_selectedIndex!]),
-          ),
-        ],
-      ),
+                  const SizedBox(width: 32),
+                  // 오른쪽: 상세 정보
+                  Expanded(
+                    flex: 3,
+                    child: _selectedIndex == null
+                        ? const Center(child: Text('평가를 선택하세요', style: TextStyle(fontSize: 20, color: Colors.grey)))
+                        : _buildDetailPanel(_evaluations[_selectedIndex!]),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
